@@ -1,29 +1,24 @@
 import { Router, Request, Response } from "express";
-import { z } from "zod";
 import argon2 from "argon2";
 import jwt from "jsonwebtoken";
-import { JWT_SECRET } from "../config";
+import { JWT_SECRET } from "@repo/backend-common/config";
 import authMiddleware from "../middleware";
+import {
+  CreateUserSchema,
+  SigninSchema,
+  CreateRoomSchema,
+} from "@repo/common-config/types";
+import { prismaClient } from "@repo/database/client";
 
 const mainRouter: Router = Router();
 
-mainRouter.post("/signup", async function (req: Request, res: Response) {
-  const body = z
-    .object({
-      username: z.string().min(3).max(10),
-      password: z
-        .string()
-        .min(8)
-        .max(20)
-        .regex(/^(?=.*[a-z])(?=.*[0-9])(?=.*[!@#]).*$/),
-      confirmPassword: z.string(),
-    })
-    .refine((data) => data.password === data.confirmPassword, {
-      message: "Passwords don't match",
-      path: ["confirmPassword"],
-    });
+interface AuthenticatedRequest extends Request {
+  userId?: string;
+  userEmail?: string;
+}
 
-  const parsedBody = body.safeParse(req.body);
+mainRouter.post("/signup", async function (req: Request, res: Response) {
+  const parsedBody = CreateUserSchema.safeParse(req.body);
   if (!parsedBody.success) {
     res.status(411).json({
       error: parsedBody.error,
@@ -32,47 +27,114 @@ mainRouter.post("/signup", async function (req: Request, res: Response) {
     return;
   }
 
+  const email = req.body.email;
   const username = req.body.username;
   const password = req.body.password;
 
+  let err = false;
   try {
     const hashedPassword = await argon2.hash(password);
 
-    res.status(200).json({
-      message: "Signed up successfully",
-      username,
-      hashedPassword,
-      password,
+    const existingUser = await prismaClient.user.findUnique({
+      where: { email: email },
+    });
+
+    if (existingUser) {
+      res.status(400).json({
+        message: "Email already registered",
+      });
+    }
+
+    await prismaClient.user.create({
+      data: {
+        email: email,
+        username: username,
+        password: hashedPassword,
+      },
     });
   } catch (e) {
+    err = true;
     res.status(403).json({
       message: "Username already exists. Please signin",
+    });
+  }
+
+  if (!err) {
+    res.status(201).json({
+      message: "Signed up successfully",
     });
   }
 });
 
 mainRouter.post("/signin", async function (req: Request, res: Response) {
+  const parsedBody = SigninSchema.safeParse(req.body);
+  if (!parsedBody.success) {
+    res.status(411).json({
+      error: parsedBody.error,
+    });
+    console.log(parsedBody.error);
+    return;
+  }
+
+  const email = req.body.email;
   const username = req.body.username;
   const password = req.body.password;
 
-  const token = jwt.sign(
-    {
-      username,
-    },
-    JWT_SECRET!
-  );
-
-  res.json({
-    token,
+  const user = await prismaClient.user.findUnique({
+    where: { email: email },
   });
+
+  if (user) {
+    const verify = await argon2.verify(user.password, password);
+
+    if (verify) {
+      const token = jwt.sign(
+        {
+          id: user.id,
+        },
+        JWT_SECRET!
+      );
+      res.status(200).json({
+        token,
+        id: user.id,
+      });
+    } else {
+      res.status(400).json({
+        message: "Incorrect credentials",
+      });
+    }
+  } else {
+    res.status(401).json({
+      message: "User does not exist",
+    });
+  }
 });
 
 mainRouter.post(
   "/room",
   authMiddleware,
   async function (req: Request, res: Response) {
-    res.json({
-      message: "Hello from room",
+    const parsedBody = CreateRoomSchema.safeParse(req.body);
+    if (!parsedBody.success) {
+      res.status(411).json({
+        error: parsedBody.error,
+      });
+      console.log(parsedBody.error);
+      return;
+    }
+
+    const userId = (req as AuthenticatedRequest).userId as string;
+    const slug = parsedBody.data.name;
+
+    await prismaClient.room.create({
+      data: {
+        slug: slug,
+        adminId: userId,
+      },
+    });
+
+    res.status(200).json({
+      message: `Hello from room ${slug}`,
     });
   }
 );
