@@ -77,7 +77,6 @@ mainRouter.post("/signin", async function (req: Request, res: Response) {
   }
 
   const email = req.body.email;
-  const username = req.body.username;
   const password = req.body.password;
 
   const user = await prismaClient.user.findUnique({
