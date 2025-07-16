@@ -8,6 +8,13 @@
   --background-end-rgb: 255, 255, 255;
 }
 
+@theme {
+  --color-indigo-400: #403e6a;
+  --color-indigo-200: #e0dfff;
+  --color-indigo-800: #2e2d39;
+  --color-indigo-900: #232329;
+}
+
 @media (prefers-color-scheme: dark) {
   :root {
     --foreground-rgb: 255, 255, 255;
