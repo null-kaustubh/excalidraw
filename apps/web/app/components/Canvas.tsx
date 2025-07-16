@@ -6,7 +6,7 @@ import { FaArrowPointer, FaHand } from "react-icons/fa6";
 
 export default function Canvas() {
   const canvasRef = useRef<HTMLCanvasElement>(null);
-  const [selectedTool, setSelectedTool] = useState<ShapeType>("arrow");
+  const [selectedTool, setSelectedTool] = useState<ShapeType>("rectangle");
 
   useEffect(() => {
     if (canvasRef.current) {
@@ -32,6 +32,10 @@ export default function Canvas() {
   const handleToolChange = (tool: ShapeType) => {
     setSelectedTool(tool);
     setCurrentTool(tool);
+
+    if ((window as any).updateCanvasCursor) {
+      (window as any).updateCanvasCursor();
+    }
   };
 
   return (
@@ -102,7 +106,10 @@ export default function Canvas() {
       </div>
 
       {/* Canvas */}
-      <canvas ref={canvasRef} className="block"></canvas>
+      <canvas
+        ref={canvasRef}
+        className="block w-full h-full cursor-crosshair"
+      ></canvas>
     </div>
   );
 }

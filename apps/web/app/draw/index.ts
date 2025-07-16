@@ -14,9 +14,16 @@ export interface Shape {
   endY: number;
 }
 
+export interface ViewTransform {
+  x: number;
+  y: number;
+  scale: number;
+}
+
 //store all completed shapes
 const shapes: Shape[] = [];
 let currentTool: ShapeType = "rectangle";
+const viewTransform: ViewTransform = { x: 0, y: 0, scale: 1 };
 
 export function setCurrentTool(tool: ShapeType) {
   currentTool = tool;
@@ -26,6 +33,70 @@ export function getCurrentTool(): ShapeType {
   return currentTool;
 }
 
+//convert screen coordinates to world coordinated
+function screenToWorld(
+  screenX: number,
+  screenY: number
+): { x: number; y: number } {
+  return {
+    x: (screenX - viewTransform.x) / viewTransform.scale,
+    y: (screenY - viewTransform.y) / viewTransform.scale,
+  };
+}
+
+//convert world coordinates to screen coordinates
+// function worldToScreen(
+//   worldX: number,
+//   worldY: number
+// ): { x: number; y: number } {
+//   return {
+//     x: worldX * viewTransform.scale + viewTransform.x,
+//     y: worldY * viewTransform.scale + viewTransform.y,
+//   };
+// }
+
+//get mouse position relative to canvas
+function getMousePos(
+  canvas: HTMLCanvasElement,
+  e: MouseEvent
+): { x: number; y: number } {
+  const rect = canvas.getBoundingClientRect();
+  return {
+    x: e.clientX - rect.left,
+    y: e.clientY - rect.top,
+  };
+}
+
+//draw grid background
+function drawGrid(ctx: CanvasRenderingContext2D, canvas: HTMLCanvasElement) {
+  const gridSize = 20;
+  const scaledGridSize = gridSize * viewTransform.scale;
+
+  if (scaledGridSize > 5) return;
+
+  ctx.strokeStyle = "rgba(64, 64, 64, 0.3)";
+  ctx.lineWidth = 1;
+
+  const startX = -(viewTransform.x % scaledGridSize);
+  const startY = -(viewTransform.y % scaledGridSize);
+
+  //horizontal lines
+  for (let x = startX; x < canvas.width; x += scaledGridSize) {
+    ctx.beginPath();
+    ctx.moveTo(x, 0);
+    ctx.lineTo(x, canvas.height);
+    ctx.stroke();
+  }
+
+  //vertical lines
+  for (let y = startY; y < canvas.height; y += scaledGridSize) {
+    ctx.beginPath();
+    ctx.moveTo(0, y);
+    ctx.lineTo(canvas.width, y);
+    ctx.stroke();
+  }
+}
+
 //draw initial background
 function drawBackground(
   ctx: CanvasRenderingContext2D,
@@ -33,13 +104,14 @@ function drawBackground(
 ) {
   ctx.fillStyle = "rgba(18, 18, 18, 1)";
   ctx.fillRect(0, 0, canvas.width, canvas.height);
+  drawGrid(ctx, canvas);
 }
 
 function drawSingleShape(ctx: CanvasRenderingContext2D, shape: Shape) {
   const { type, startX, startY, endX, endY } = shape;
 
   // Set common stroke properties
-  ctx.lineWidth = 2;
+  ctx.lineWidth = 2 / viewTransform.scale;
   ctx.lineCap = "round";
   ctx.lineJoin = "round";
   ctx.strokeStyle = "rgba(240, 240, 240, 1)";
@@ -157,7 +229,7 @@ function drawRectangle(
   ctx.lineJoin = "round";
   ctx.strokeStyle = "rgba(240, 240, 240, 1)";
 
-  const cornerRadius = 40;
+  const cornerRadius = 40 / viewTransform.scale;
   drawRoundedRect(ctx, x, y, width, height, cornerRadius);
   ctx.stroke();
 }
@@ -204,7 +276,7 @@ function drawDiamond(
   const leftY = centerY;
 
   // Define corner radius - adjust this value to make corners more or less rounded
-  const cornerRadius = Math.min(width, height) * 0.15;
+  const cornerRadius = (Math.min(width, height) * 0.15) / viewTransform.scale;
 
   ctx.beginPath();
   drawRoundedCorner(
@@ -271,12 +343,19 @@ function redrawCanvas(
 ) {
   // Clear and draw background
   ctx.clearRect(0, 0, canvas.width, canvas.height);
+  ctx.save();
+
   drawBackground(ctx, canvas);
+
+  ctx.translate(viewTransform.x, viewTransform.y);
+  ctx.scale(viewTransform.scale, viewTransform.scale);
 
   // Draw all completed rectangles
   shapes.forEach((shape) => {
     drawSingleShape(ctx, shape);
   });
+
+  ctx.restore();
 }
 
 export function initDraw(canvas: HTMLCanvasElement) {
@@ -286,46 +365,136 @@ export function initDraw(canvas: HTMLCanvasElement) {
     return;
   }
 
-  drawBackground(ctx, canvas);
+  redrawCanvas(ctx, canvas);
 
-  let clicked = false;
+  let isDrawing = false;
+  let isPanning = false;
   let startX = 0;
   let startY = 0;
+  let lastPanX = 0;
+  let lastPanY = 0;
 
+  //mousedown handler
   canvas.addEventListener("mousedown", (e) => {
-    clicked = true;
-    startX = e.clientX;
-    startY = e.clientY;
-  });
+    const mousePos = getMousePos(canvas, e);
 
-  canvas.addEventListener("mouseup", (e) => {
-    clicked = false;
-
-    if (startX !== e.clientX || startY !== e.clientY) {
-      shapes.push({
-        type: currentTool,
-        startX,
-        startY,
-        endX: e.clientX,
-        endY: e.clientY,
-      });
+    if (currentTool === "hand") {
+      isPanning = true;
+      lastPanX = mousePos.x;
+      lastPanY = mousePos.y;
+      canvas.style.cursor = "grabbing";
+    } else {
+      isDrawing = true;
+      const worldPos = screenToWorld(mousePos.x, mousePos.y);
+      startX = worldPos.x;
+      startY = worldPos.y;
     }
-
-    //final redraw
-    redrawCanvas(ctx, canvas);
   });
 
-  canvas.addEventListener("mousemove", (e) => {
-    if (clicked) {
+  //mouseup handler
+  canvas.addEventListener("mouseup", (e) => {
+    if (isPanning) {
+      isPanning = false;
+      canvas.style.cursor = currentTool === "hand" ? "grab" : "crosshair";
+    } else if (isDrawing) {
+      isDrawing = false;
+
+      const mousePos = getMousePos(canvas, e);
+      const worldPos = screenToWorld(mousePos.x, mousePos.y);
+
+      if (startX !== worldPos.x || startY !== worldPos.y) {
+        shapes.push({
+          type: currentTool,
+          startX,
+          startY,
+          endX: worldPos.x,
+          endY: worldPos.y,
+        });
+      }
+
+      //final redraw
       redrawCanvas(ctx, canvas);
+    }
+  });
+
+  //mousemove handler
+  canvas.addEventListener("mousemove", (e) => {
+    const mousePos = getMousePos(canvas, e);
+
+    if (isPanning) {
+      const deltaX = mousePos.x - lastPanX;
+      const deltaY = mousePos.y - lastPanY;
+
+      viewTransform.x += deltaX;
+      viewTransform.y += deltaY;
+
+      lastPanX = mousePos.x;
+      lastPanY = mousePos.y;
+
+      redrawCanvas(ctx, canvas);
+    } else if (isDrawing) {
+      const worldPos = screenToWorld(mousePos.x, mousePos.y);
+
+      redrawCanvas(ctx, canvas);
+
+      ctx.save();
+      ctx.translate(viewTransform.x, viewTransform.y);
+      ctx.scale(viewTransform.scale, viewTransform.scale);
 
       drawSingleShape(ctx, {
         type: currentTool,
         startX,
         startY,
-        endX: e.clientX,
-        endY: e.clientY,
+        endX: worldPos.x,
+        endY: worldPos.y,
       });
+
+      ctx.restore();
     }
   });
+
+  //wheel handler
+  canvas.addEventListener("wheel", (e) => {
+    e.preventDefault();
+
+    if (e.ctrlKey || e.metaKey) {
+      const mousePos = getMousePos(canvas, e);
+      const worldPosBeforeZoom = screenToWorld(mousePos.x, mousePos.y);
+
+      //zoom factor
+      const zoomFactor = e.deltaY > 0 ? 0.9 : 1.1;
+      const newScale = Math.max(
+        0.1,
+        Math.min(5, viewTransform.scale * zoomFactor)
+      );
+
+      viewTransform.scale = newScale;
+
+      //adjust pan to keep mouse position stable
+      const worldPosAfterZoom = screenToWorld(mousePos.x, mousePos.y);
+      viewTransform.x +=
+        (worldPosAfterZoom.x - worldPosBeforeZoom.x) * viewTransform.scale;
+      viewTransform.y +=
+        (worldPosAfterZoom.y - worldPosBeforeZoom.y) * viewTransform.scale;
+
+      redrawCanvas(ctx, canvas);
+    }
+  });
+
+  //update cursor based on tool
+  const updateCursor = () => {
+    if (currentTool === "hand") {
+      canvas.style.cursor = isPanning ? "grabbing" : "grab";
+    } else if (currentTool === "arrow") {
+      canvas.style.cursor = "default";
+    } else {
+      canvas.style.cursor = "crosshair";
+    }
+  };
+
+  //initial cursor setup
+  updateCursor();
+
+  //export function to update cursor
+  (window as any).updateCanvasCursor = updateCursor;
 }
